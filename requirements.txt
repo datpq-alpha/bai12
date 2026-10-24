@@ -1,2 +1,4 @@
-deep-translator
 streamlit
+pandas
+requests
+deep-translator
