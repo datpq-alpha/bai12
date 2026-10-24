@@ -1,7 +1,7 @@
 import streamlit as st
 import sqlite3, requests
 import pandas as pd
-from deep_translator import GoogleTranslator
+from deep_translator import MyMemoryTranslator
 
 # --- 1. CẤU HÌNH DATABASE ---
 DB = "vocab.db"
@@ -33,11 +33,15 @@ def del_word(wid):
     with sqlite3.connect(DB) as conn:
         conn.execute("DELETE FROM vocab WHERE id=?", (wid,))
 
-# --- 2. HÀM TRA TỪ & DỊCH (Có cơ chế Fallback phòng khi API bị chặn trên Cloud) ---
+# --- 2. HÀM TRA TỪ & DỊCH (Dùng MyMemoryTranslator chống chặn trên Cloud) ---
 def get_word_data(word):
     url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
     
-    # Thử gọi API từ điển gốc
+    meaning_en = ""
+    example = ""
+    word_type_en = "Khác"
+    
+    # Thử lấy nghĩa tiếng Anh từ từ điển
     try:
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
@@ -45,30 +49,31 @@ def get_word_data(word):
             meaning_en = data[0]['meanings'][0]['definitions'][0]['definition']
             example = data[0]['meanings'][0]['definitions'][0].get('example', "")
             word_type_en = data[0]['meanings'][0]['partOfSpeech']
-
-            # Dịch nghĩa tự động bằng deep-translator
-            meaning_vi = GoogleTranslator(source='auto', target='vi').translate(meaning_en)
-
-            return {
-                "meaning": f"{meaning_en} \n(Nghĩa: {meaning_vi})",
-                "example": example,
-                "word_type": word_type_en
-            }
     except Exception as e:
         print(f"Lỗi API từ điển: {e}")
 
-    # --- FALLBACK: Nếu API chính bị chặn/lỗi trên Streamlit Cloud, dùng tạm deep-translator dịch trực tiếp từ ---
-    try:
-        meaning_vi = GoogleTranslator(source='en', target='vi').translate(word)
-        return {
-            "meaning": f"Nghĩa tiếng Việt: {meaning_vi} \n(Lưu ý: API từ điển bị giới hạn trên Cloud, đây là nghĩa dịch trực tiếp từ)",
-            "example": "",
-            "word_type": "Khác"
-        }
-    except Exception as e:
-        print(f"Lỗi dịch dự phòng: {e}")
+    # Nếu từ điển không có, dùng chính từ vựng đó để dịch
+    text_to_translate = meaning_en if meaning_en else word
 
-    return None
+    # Dịch nghĩa sang tiếng Việt bằng MyMemoryTranslator (Ổn định trên Streamlit Cloud)
+    try:
+        meaning_vi = MyMemoryTranslator(source='en', target='vi').translate(text_to_translate)
+        if not meaning_vi:
+            meaning_vi = "Không dịch được tự động"
+    except Exception as e:
+        print(f"Lỗi dịch: {e}")
+        meaning_vi = "Lỗi kết nối dịch thuật"
+
+    if meaning_en:
+        final_meaning = f"{meaning_en} \n(Nghĩa: {meaning_vi})"
+    else:
+        final_meaning = f"Nghĩa tiếng Việt: {meaning_vi}"
+
+    return {
+        "meaning": final_meaning,
+        "example": example,
+        "word_type": word_type_en
+    }
 
 # --- 3. GIAO DIỆN CHÍNH ---
 st.set_page_config(page_title="Học Từ Vựng Pro", layout="wide")
@@ -92,7 +97,7 @@ if choice == "➕ Thêm từ mới":
     if c2.button("🔍 Tra từ & Dịch", use_container_width=True):
         if input_word:
             with st.spinner("Đang lấy dữ liệu..."):
-                result = get_word_data(input_word.strip())
+                result = get_word_data(input_word.strip().lower())
                 if result:
                     st.session_state.temp_data = {
                         "word": input_word,
